@@ -11,7 +11,9 @@ debug_echo() {
     fi
 }
 
-OUTPUT_FILE="ids.txt"
+ANILIST_FILE="anilist_ids.txt"
+ANIDB_FILE="anidb_ids.txt"
+
 TMP_FILE=$(mktemp)
 
 API_URL="https://graphql.anilist.co"
@@ -41,7 +43,7 @@ debug_echo "Determined season: $SEASON $YEAR (current month: $month)"
 
 echo "Fetching anime IDs for $SEASON $YEAR..."
 
-> "$OUTPUT_FILE"
+> "$ANILIST_FILE"
 
 # =========================
 # FETCH FROM ANILIST
@@ -76,50 +78,49 @@ while [[ "$has_next_page" == "true" ]]; do
         exit 0
     fi
 
-    echo "$ids" >> "$OUTPUT_FILE"
+    echo "$ids" >> "$ANILIST_FILE"
     page=$((page + 1))
     sleep 2
 done
 
-total_ids=$(wc -l < "$OUTPUT_FILE")
+total_ids=$(wc -l < "$ANILIST_FILE")
 echo "Fetched $total_ids AniList IDs."
 
-debug_echo "All AniList IDs collected: $(tr '\n' ' ' < "$OUTPUT_FILE")"
+debug_echo "All AniList IDs collected: $(tr '\n' ' ' < "$ANILIST_FILE")"
 
 # =========================
 # MAP → ANIDB IDS (FAST)
 # =========================
 echo "Mapping AniList IDs → AniDB IDs..."
 
-# Build comma-separated list
-id_list=$(paste -sd, "$OUTPUT_FILE")
-debug_echo "Comma-separated AniList IDs: $id_list"
+temp_dir=$(mktemp -d)
+OFFDB_FILE="$temp_dir/anime-offline-database.jsonl"
+echo "Downloading https://github.com/manami-project/anime-offline-database/releases/download/latest/anime-offline-database.jsonl into $OFFDB_FILE"
+curl -L -o $OFFDB_FILE https://github.com/manami-project/anime-offline-database/releases/download/latest/anime-offline-database.jsonl
 
-sql_query="SELECT anidb_id FROM $TABLE WHERE anilist_id IN ($id_list);"
-debug_echo "SQL query: $sql_query"
 
-# Query SQLite
-sqlite3 "$DB_FILE" <<EOF > "$TMP_FILE"
-.mode list
-$sql_query
-EOF
+> "$ANIDB_FILE"
+echo ""
+echo "Strating Mapping ...."
 
-mapped_count=$(wc -l < "$TMP_FILE")
 
-debug_echo "Mapping result contains $mapped_count lines."
+while read -r id; do
 
-if [[ "$mapped_count" -eq 0 ]]; then
-    echo "No AniDB IDs found. Check your DB mapping." >&2
-    exit 1
-fi
+    [[ -z "$id" ]] && continue
 
-if [[ "$DEBUG" -eq 1 ]]; then
-    debug_echo "First 10 AniDB IDs from mapping:"
-    head -n 10 "$TMP_FILE" | while read -r id; do debug_echo "  $id"; done
-fi
+    result=$(jq -r --arg id "$id" '
+        select(.sources | type == "array") |
+        select(any(.sources[]; test("anilist\\.co/anime/" + $id))) |
+        .sources[] | select(contains("anidb.net/anime/")) | split("/")[-1]
+        ' "$OFFDB_FILE" 2>/dev/null)
 
-mv "$TMP_FILE" "$OUTPUT_FILE"
+    if [[ -n "$result" ]]; then
+        echo "$result"
+    else
+        echo "none"
+    fi
+done < "$ANILIST_FILE" > "$ANIDB_FILE"
 
 echo "Done."
-echo "Mapped $mapped_count AniDB IDs."
-echo "Saved to: $OUTPUT_FILE"
+# echo "Mapped $mapped_count AniDB IDs."
+echo "Saved to: $ANILIST_FILE"
