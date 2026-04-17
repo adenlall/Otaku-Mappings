@@ -14,7 +14,7 @@ debug_echo() {
 
 # auto => Fetch from anilist save into $ANILIST_FILE them map from AniDB and save into $ANIDB_FILE
 # manual => Get ids directly from $ANILIST_FILE them map from AniDB and save into $ANIDB_FILE
-MODE="manual" 
+MODE="auto"
 
 API_URL="https://graphql.anilist.co"
 
@@ -29,7 +29,7 @@ TABLE="anime"
 ########GET#ANILIST#########
 ############################
 
-if [["$MODE" == "auto"]]; then ## ONLY FETCH FROM ANILIST IN AUTO MODE 
+if [[ $MODE == "auto" ]]; then ## FETCH FROM ANILIST ONLY IN AUTO MODE 
 
 
     # DETERMINE SEASON
@@ -85,7 +85,7 @@ if [["$MODE" == "auto"]]; then ## ONLY FETCH FROM ANILIST IN AUTO MODE
     debug_echo "All AniList IDs collected: $(tr '\n' ' ' < "$ANILIST_FILE")"
 
 else
-    echo "\$MODE=\"manual\" => mapping into ANIDB directly from \$ANILIST_FILE ..."
+    echo "\$MODE=\"$MODE\" => mapping into ANIDB directly from \$ANILIST_FILE ..."
 fi
 
 
@@ -97,6 +97,7 @@ echo "Mapping AniList IDs → AniDB IDs..."
 # Downloading manami-project/anime-offline-database db into /tmp
 temp_dir=$(mktemp -d)
 OFFDB_FILE="$temp_dir/anime-offline-database.jsonl"
+# OFFDB_FILE="/tmp/tmp.TuJXq6eLLE/anime-offline-database.jsonl"
 echo "Downloading manami-project/anime-offline-database into $OFFDB_FILE"
 ### manami-project/anime-offline-database HAS ALL ANIME DATA COMBINED
 ### It could be used to map anything from/into [Anilist, MAL, Kitsu, AniDB ...] but missing TMDB and TVDB
@@ -112,14 +113,26 @@ while read -r id; do
 
     [[ -z "$id" ]] && continue # SKIP WHEN EMPTY LINE
 
-    result=$(jq -r --arg id "$id" '
+    anidb_id=$(jq -r --arg id "$id" '
         select(.sources | type == "array") |
         select(any(.sources[]; test("anilist\\.co/anime/" + $id))) |
         .sources[] | select(contains("anidb.net/anime/")) | split("/")[-1]
         ' "$OFFDB_FILE" 2>/dev/null)
 
-    if [[ -n "$result" ]]; then
-        echo "$result"
+    mal_id=$(jq -r --arg id "$id" '
+        select(.sources | type == "array") |
+        select(any(.sources[]; test("anilist\\.co/anime/" + $id))) |
+        .sources[] | select(contains("myanimelist.net/anime/")) | split("/")[-1]
+        ' "$OFFDB_FILE" 2>/dev/null)
+
+    title=$(jq -r --arg id "$id" '
+        select(.sources | type == "array") |
+        select(any(.sources[]; test("anilist\\.co/anime/" + $id))) |
+        .title
+        ' "$OFFDB_FILE" 2>/dev/null)
+
+    if [[ -n "$anidb_id" ]]; then
+        echo "$anidb_id|||$mal_id|||$title"
     else
         echo "none"
     fi
